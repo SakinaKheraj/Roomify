@@ -15,6 +15,8 @@ export interface Project {
     isPublic?: boolean;
 }
 
+export type DesignItem = Project;
+
 export interface CreateProjectParams {
     item: Project;
     visibility?: ProjectVisibility;
