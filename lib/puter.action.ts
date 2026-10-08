@@ -1,159 +1,135 @@
-import { getOrCreateHostingConfig, uploadImageToHosting } from "./puter.hosting";
-import {
-    projectKey,
-    communityKey,
-    kvGet,
-    kvSet,
-    kvDelete,
-    kvList,
-    PROJECT_PREFIX,
-    COMMUNITY_PREFIX,
-} from "./kv";
-import type { CreateProjectParams } from "./models/project";
+import puter from "@heyputer/puter.js";
+import {getOrCreateHostingConfig, uploadImageToHosting} from "./puter.hosting";
+import {isHostedUrl} from "./utils";
+import {PUTER_WORKER_URL} from "./constants";
+import type {ProjectVisibility} from "./models/project";
 
+// ─── Auth (re-exported from lib/auth for backward compat) ────────────────────
 export { signIn, signOut, getCurrentUser } from "./auth";
 
-/**
- * Creates or updates a project in Puter KV storage and optionally syncs images to hosting CDN.
- */
-export const createProject = async ({
-    item,
-    visibility = "private",
-}: CreateProjectParams): Promise<DesignItem | null> => {
-    try {
-        const projectId = item.id;
-        let hostedSource = item.sourceImage;
-        let hostedRender = item.renderedImage;
+// ─── Project CRUD ─────────────────────────────────────────────────────────────
 
-        try {
-            const hosting = await getOrCreateHostingConfig();
-            if (hosting && projectId) {
-                if (item.sourceImage && !item.sourceImage.startsWith("http")) {
-                    const uploadedSource = await uploadImageToHosting({
-                        hosting,
-                        url: item.sourceImage,
-                        projectId,
-                        label: "source",
-                    });
-                    if (uploadedSource?.url) hostedSource = uploadedSource.url;
-                }
-                if (item.renderedImage && !item.renderedImage.startsWith("http")) {
-                    const uploadedRender = await uploadImageToHosting({
-                        hosting,
-                        url: item.renderedImage,
-                        projectId,
-                        label: "rendered",
-                    });
-                    if (uploadedRender?.url) hostedRender = uploadedRender.url;
-                }
-            }
-        } catch (e) {
-            console.warn("Hosting upload skipped, saving direct payload:", e);
-        }
-
-        const projectPayload: DesignItem = {
-            ...item,
-            sourceImage: hostedSource,
-            renderedImage: hostedRender,
-            isPublic: visibility === "public",
-            timestamp: item.timestamp || Date.now(),
-        };
-
-        const key = projectKey(projectId);
-        await kvSet(key, projectPayload);
-
-        if (visibility === "public") {
-            await kvSet(communityKey(projectId), projectPayload);
-        }
-
-        return projectPayload;
-    } catch (e) {
-        console.error("Failed to create/save project:", e);
+export const createProject = async ({ item, visibility = "private" }: CreateProjectParams): Promise<DesignItem | null | undefined> => {
+    if(!PUTER_WORKER_URL) {
+        console.warn('Missing VITE_PUTER_WORKER_URL; skip history fetch;');
         return null;
     }
-};
+    const projectId = item.id;
 
-/**
- * Fetches a single project by its ID from Puter KV.
- */
-export const getProjectById = async ({ id }: { id: string }): Promise<DesignItem | null> => {
-    try {
-        const key = projectKey(id);
-        const project = await kvGet<DesignItem>(key);
-        return project;
-    } catch (e) {
-        console.error(`Failed to get project with id: ${id}`, e);
+    const hosting = await getOrCreateHostingConfig();
+
+    const hostedSource = projectId ?
+        await uploadImageToHosting({ hosting, url: item.sourceImage, projectId, label: 'source', }) : null;
+
+    const hostedRender = projectId && item.renderedImage ?
+        await uploadImageToHosting({ hosting, url: item.renderedImage, projectId, label: 'rendered', }) : null;
+
+    const resolvedSource = hostedSource?.url || (isHostedUrl(item.sourceImage)
+        ? item.sourceImage
+        : ''
+    );
+
+    if(!resolvedSource) {
+        console.warn('Failed to host source image, skipping save.')
         return null;
     }
-};
 
-/**
- * Lists all user projects from Puter KV.
- */
-export const getProjects = async (): Promise<DesignItem[]> => {
-    try {
-        const list = await kvList<DesignItem>(PROJECT_PREFIX);
-        return list.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
-    } catch (e) {
-        console.error("Failed to fetch projects list:", e);
-        return [];
+    const resolvedRender = hostedRender?.url
+        ? hostedRender?.url
+        : item.renderedImage && isHostedUrl(item.renderedImage)
+            ? item.renderedImage
+            : undefined;
+
+    const {
+        sourcePath: _sourcePath,
+        renderedPath: _renderedPath,
+        publicPath: _publicPath,
+        ...rest
+    } = item;
+
+    const payload = {
+        ...rest,
+        sourceImage: resolvedSource,
+        renderedImage: resolvedRender,
+        visibility,
     }
-};
 
-/**
- * Toggles a project's visibility between private and public community feed.
- */
-export const updateProjectVisibility = async (
-    id: string,
-    visibility: "private" | "public"
-): Promise<boolean> => {
     try {
-        const project = await getProjectById({ id });
-        if (!project) return false;
+        const response = await puter.workers.exec(`${PUTER_WORKER_URL}/api/projects/save`, {
+            method: 'POST',
+            body: JSON.stringify({
+                project: payload,
+                visibility
+            })
+        });
 
-        const updated: DesignItem = {
-            ...project,
-            isPublic: visibility === "public",
-        };
-
-        await kvSet(projectKey(id), updated);
-
-        if (visibility === "public") {
-            await kvSet(communityKey(id), updated);
-        } else {
-            await kvDelete(communityKey(id));
+        if(!response.ok) {
+            console.error('failed to save the project', await response.text());
+            return null;
         }
 
-        return true;
-    } catch (e) {
-        console.error("Failed to update project visibility:", e);
-        return false;
-    }
-};
+        const data = (await response.json()) as { project?: DesignItem | null }
 
-/**
- * Deletes a project from Puter KV.
- */
-export const deleteProject = async (id: string): Promise<boolean> => {
-    try {
-        await kvDelete(projectKey(id));
-        await kvDelete(communityKey(id));
-        return true;
+        return data?.project ?? null;
     } catch (e) {
-        console.error("Failed to delete project:", e);
-        return false;
+        console.log('Failed to save project', e)
+        return null;
     }
-};
+}
 
-/**
- * Fetches all public community projects.
- */
-export const getCommunityProjects = async (): Promise<DesignItem[]> => {
+export const getProjects = async () => {
+    if(!PUTER_WORKER_URL) {
+        console.warn('Missing VITE_PUTER_WORKER_URL; skip history fetch;');
+        return []
+    }
+
     try {
-        const list = await kvList<DesignItem>(COMMUNITY_PREFIX);
-        return list.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+        const response = await puter.workers.exec(`${PUTER_WORKER_URL}/api/projects/list`, { method: 'GET' });
+
+        if(!response.ok) {
+            console.error('Failed to fetch history', await response.text());
+            return [];
+        }
+
+        const data = (await response.json()) as { projects?: DesignItem[] | null };
+
+        return Array.isArray(data?.projects) ? data?.projects : [];
     } catch (e) {
-        console.error("Failed to fetch community projects:", e);
+        console.error('Failed to get projects', e);
         return [];
+    }
+}
+
+export const getProjectById = async ({ id }: { id: string }) => {
+    if (!PUTER_WORKER_URL) {
+        console.warn("Missing VITE_PUTER_WORKER_URL; skipping project fetch.");
+        return null;
+    }
+
+    console.log("Fetching project with ID:", id);
+
+    try {
+        const response = await puter.workers.exec(
+            `${PUTER_WORKER_URL}/api/projects/get?id=${encodeURIComponent(id)}`,
+            { method: "GET" },
+        );
+
+        console.log("Fetch project response:", response);
+
+        if (!response.ok) {
+            console.error("Failed to fetch project:", await response.text());
+            return null;
+        }
+
+        const data = (await response.json()) as {
+            project?: DesignItem | null;
+        };
+
+        console.log("Fetched project data:", data);
+
+        return data?.project ?? null;
+    } catch (error) {
+        console.error("Failed to fetch project:", error);
+        return null;
     }
 };
