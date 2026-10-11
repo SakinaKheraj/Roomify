@@ -1,44 +1,62 @@
-import { useNavigate, useOutletContext, useParams} from "react-router";
+import { useNavigate, useOutletContext, useParams, useLocation } from "react-router";
 import {useEffect, useRef, useState} from "react";
 import {generate3DView} from "../../lib/ai.action";
-import {Box, Download, RefreshCcw, Share2, X} from "lucide-react";
+import {Box, Download, RefreshCcw, Share2, X, AlertCircle} from "lucide-react";
 import Button from "../../components/ui/Button";
 import {createProject, getProjectById} from "../../lib/puter.action";
 import {ReactCompareSlider, ReactCompareSliderImage} from "react-compare-slider";
 
+const GENERATION_TIMEOUT_MS = 120_000; // 2 minutes
+
 const VisualizerId = () => {
     const { id } = useParams();
     const navigate = useNavigate();
-    const { userId } = useOutletContext<AuthContext>()
+    const location = useLocation();
+    const { userId, isSignedIn, signIn } = useOutletContext<AuthContext>();
 
     const hasInitialGenerated = useRef(false);
 
     const [project, setProject] = useState<DesignItem | null>(null);
     const [isProjectLoading, setIsProjectLoading] = useState(true);
-
     const [isProcessing, setIsProcessing] = useState(false);
     const [currentImage, setCurrentImage] = useState<string | null>(null);
+    const [error, setError] = useState<string | null>(null);
 
     const handleBack = () => navigate('/');
+
     const handleExport = () => {
         if (!currentImage) return;
-
         const link = document.createElement('a');
         link.href = currentImage;
         link.download = `roomify-${id || 'design'}.png`;
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
-    }
+    };
 
     const runGeneration = async (item: DesignItem) => {
-        if(!id || !item.sourceImage) return;
+        if (!id || !item.sourceImage) return;
+
+        setError(null);
+        setIsProcessing(true);
+
+        // 2-minute timeout so spinner never hangs forever
+        const timeoutPromise = new Promise<null>((resolve) =>
+            setTimeout(() => resolve(null), GENERATION_TIMEOUT_MS)
+        );
 
         try {
-            setIsProcessing(true);
-            const result = await generate3DView({ sourceImage: item.sourceImage });
+            const result = await Promise.race([
+                generate3DView({ sourceImage: item.sourceImage }),
+                timeoutPromise,
+            ]);
 
-            if(result.renderedImage) {
+            if (!result) {
+                setError('Generation timed out after 2 minutes. Make sure you are signed in to Puter and try again.');
+                return;
+            }
+
+            if (result.renderedImage) {
                 setCurrentImage(result.renderedImage);
 
                 const updatedItem = {
@@ -48,21 +66,37 @@ const VisualizerId = () => {
                     timestamp: Date.now(),
                     ownerId: item.ownerId ?? userId ?? null,
                     isPublic: item.isPublic ?? false,
-                }
+                };
 
-                const saved = await createProject({ item: updatedItem, visibility: "private" })
+                const saved = await createProject({ item: updatedItem, visibility: "private" });
+                const finalProject = saved || updatedItem;
+                setProject(finalProject);
+                setCurrentImage(finalProject.renderedImage || result.renderedImage);
 
-                if(saved) {
-                    setProject(saved);
-                    setCurrentImage(saved.renderedImage || result.renderedImage);
+                try {
+                    sessionStorage.setItem(`roomify_project_${id}`, JSON.stringify(finalProject));
+                } catch {
+                    // Ignore storage quota limits
                 }
+            } else {
+                setError('AI returned no image. Make sure you are signed in to Puter and try again.');
             }
-        } catch (error) {
-            console.error('Generation failed: ', error)
+        } catch (err) {
+            console.error('Generation failed:', err);
+            setError(
+                `Generation failed: ${err instanceof Error ? err.message : 'Unknown error'}. Make sure you are signed in to Puter.`
+            );
         } finally {
             setIsProcessing(false);
         }
-    }
+    };
+
+    const handleRetry = () => {
+        if (!project) return;
+        setError(null);
+        hasInitialGenerated.current = true;
+        void runGeneration(project);
+    };
 
     useEffect(() => {
         let isMounted = true;
@@ -75,7 +109,24 @@ const VisualizerId = () => {
 
             setIsProjectLoading(true);
 
-            const fetchedProject = await getProjectById({ id });
+            // Try cloud first; fall back to navigation state when no Worker URL
+            let fetchedProject = await getProjectById({ id });
+
+            if (!fetchedProject && location.state?.project?.id === id) {
+                fetchedProject = location.state.project as DesignItem;
+            }
+
+            // Fallback to sessionStorage in case of page reload
+            if (!fetchedProject) {
+                try {
+                    const cached = sessionStorage.getItem(`roomify_project_${id}`);
+                    if (cached) {
+                        fetchedProject = JSON.parse(cached) as DesignItem;
+                    }
+                } catch {
+                    // Ignore
+                }
+            }
 
             if (!isMounted) return;
 
@@ -86,19 +137,11 @@ const VisualizerId = () => {
         };
 
         loadProject();
-
-        return () => {
-            isMounted = false;
-        };
+        return () => { isMounted = false; };
     }, [id]);
 
     useEffect(() => {
-        if (
-            isProjectLoading ||
-            hasInitialGenerated.current ||
-            !project?.sourceImage
-        )
-            return;
+        if (isProjectLoading || hasInitialGenerated.current || !project?.sourceImage) return;
 
         if (project.renderedImage) {
             setCurrentImage(project.renderedImage);
@@ -115,7 +158,6 @@ const VisualizerId = () => {
             <nav className="topbar">
                 <div className="brand">
                     <Box className="logo" />
-
                     <span className="name">Roomify</span>
                 </div>
                 <Button variant="ghost" size="sm" onClick={handleBack} className="exit">
@@ -148,13 +190,13 @@ const VisualizerId = () => {
                         </div>
                     </div>
 
-                    <div className={`render-area ${isProcessing ? 'is-processing': ''}`}>
+                    <div className={`render-area ${isProcessing ? 'is-processing' : ''}`}>
                         {currentImage ? (
                             <img src={currentImage} alt="AI Render" className="render-img" />
                         ) : (
                             <div className="render-placeholder">
                                 {project?.sourceImage && (
-                                    <img src={project?.sourceImage} alt="Original" className="render-fallback" />
+                                    <img src={project.sourceImage} alt="Original" className="render-fallback" />
                                 )}
                             </div>
                         )}
@@ -164,12 +206,31 @@ const VisualizerId = () => {
                                 <div className="rendering-card">
                                     <RefreshCcw className="spinner" />
                                     <span className="title">Rendering...</span>
-                                    <span className="subtitle">Generating your 3D visualization</span>
+                                    <span className="subtitle">Generating your 3D visualization (up to 2 min)</span>
+                                </div>
+                            </div>
+                        )}
+
+                        {error && !isProcessing && (
+                            <div className="render-overlay">
+                                <div className="rendering-card" style={{ gap: '12px' }}>
+                                    <AlertCircle style={{ color: '#f87171', width: 32, height: 32 }} />
+                                    <span className="title" style={{ color: '#f87171' }}>Generation Failed</span>
+                                    <span className="subtitle" style={{ maxWidth: 300, textAlign: 'center' }}>{error}</span>
+                                    <div style={{ display: 'flex', gap: '8px', marginTop: 8 }}>
+                                        {!isSignedIn && (
+                                            <Button size="sm" onClick={signIn} variant="primary">
+                                                Sign In with Puter
+                                            </Button>
+                                        )}
+                                        <Button size="sm" onClick={handleRetry} variant={!isSignedIn ? "ghost" : "primary"}>
+                                            <RefreshCcw className="w-4 h-4 mr-2" /> Retry
+                                        </Button>
+                                    </div>
                                 </div>
                             </div>
                         )}
                     </div>
-
                 </div>
 
                 <div className="panel compare">
@@ -187,10 +248,10 @@ const VisualizerId = () => {
                                 defaultValue={50}
                                 style={{ width: '100%', height: 'auto' }}
                                 itemOne={
-                                    <ReactCompareSliderImage src={project?.sourceImage} alt="before" className="compare-img" />
+                                    <ReactCompareSliderImage src={project.sourceImage} alt="before" className="compare-img" />
                                 }
                                 itemTwo={
-                                    <ReactCompareSliderImage src={currentImage || project?.renderedImage} alt="after" className="compare-img" />
+                                    <ReactCompareSliderImage src={currentImage || project.renderedImage || ""} alt="after" className="compare-img" />
                                 }
                             />
                         ) : (
@@ -204,6 +265,7 @@ const VisualizerId = () => {
                 </div>
             </section>
         </div>
-    )
-}
-export default VisualizerId
+    );
+};
+
+export default VisualizerId;

@@ -37,8 +37,19 @@ const Home = () => {
             isPublic: false,
         };
 
+        // Try to save to cloud (only works if VITE_PUTER_WORKER_URL is set)
         await createProject({ item: newItem, visibility: "private" });
-        navigate(`/visualizer/${id}`);
+
+        // Cache in sessionStorage for persistence across page refreshes
+        try {
+            sessionStorage.setItem(`roomify_project_${id}`, JSON.stringify(newItem));
+        } catch {
+            // Ignore storage limits
+        }
+
+        // Always pass project via navigation state as a fallback
+        // so the visualizer can render without cloud persistence
+        navigate(`/visualizer/${id}`, { state: { project: newItem } });
     };
 
     return (
