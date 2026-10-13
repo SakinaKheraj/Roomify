@@ -30,3 +30,16 @@ export interface UpdateVisibilityParams {
     id: string;
     visibility: ProjectVisibility;
 }
+
+export interface UpdateProjectParams {
+    id: string;
+    updates: Partial<Omit<Project, "id">>;
+}
+
+export interface DeleteProjectParams {
+    id: string;
+}
+
+export interface GetUserProjectsParams {
+    userId?: string | null;
+}

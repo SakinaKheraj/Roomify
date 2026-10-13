@@ -121,6 +121,19 @@ interface CreateProjectParams {
     visibility?: "private" | "public";
 }
 
+interface UpdateProjectParams {
+    id: string;
+    updates: Partial<Omit<DesignItem, "id">>;
+}
+
+interface DeleteProjectParams {
+    id: string;
+}
+
+interface GetUserProjectsParams {
+    userId?: string | null;
+}
+
 interface Generate3DViewParams {
     sourceImage: string;
     projectId?: string | null;
