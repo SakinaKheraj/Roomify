@@ -2,18 +2,30 @@ import puter from "@heyputer/puter.js";
 import {getOrCreateHostingConfig, uploadImageToHosting} from "./puter.hosting";
 import {isHostedUrl} from "./utils";
 import {PUTER_WORKER_URL} from "./constants";
-import type {ProjectVisibility} from "./models/project";
+import type {
+    ProjectVisibility,
+    UpdateProjectParams,
+    DeleteProjectParams,
+    GetUserProjectsParams,
+} from "./models/project";
+import {
+    updateProjectKV,
+    deleteProjectKV,
+    getUserProjectsKV,
+    getProjectKV,
+    saveProjectKV,
+} from "./kv";
 
 // ─── Auth (re-exported from lib/auth for backward compat) ────────────────────
 export { signIn, signOut, getCurrentUser } from "./auth";
 
+// ─── Models & KV re-exports (Khushi Pal - Oct 14) ───────────────────────────
+export { updateProjectKV, deleteProjectKV, getUserProjectsKV, getProjectKV, saveProjectKV } from "./kv";
+export type { UpdateProjectParams, DeleteProjectParams, GetUserProjectsParams } from "./models/project";
+
 // ─── Project CRUD ─────────────────────────────────────────────────────────────
 
 export const createProject = async ({ item, visibility = "private" }: CreateProjectParams): Promise<DesignItem | null | undefined> => {
-    if(!PUTER_WORKER_URL) {
-        console.warn('Missing VITE_PUTER_WORKER_URL; skip history fetch;');
-        return null;
-    }
     const projectId = item.id;
 
     const hosting = await getOrCreateHostingConfig();
@@ -47,11 +59,17 @@ export const createProject = async ({ item, visibility = "private" }: CreateProj
         ...rest
     } = item;
 
-    const payload = {
+    const payload: DesignItem = {
         ...rest,
+        id: projectId,
         sourceImage: resolvedSource,
         renderedImage: resolvedRender,
-        visibility,
+        isPublic: visibility === "public",
+    };
+
+    if(!PUTER_WORKER_URL) {
+        console.warn('Missing VITE_PUTER_WORKER_URL; persisting directly to Puter KV;');
+        return await saveProjectKV(payload);
     }
 
     try {
@@ -64,46 +82,46 @@ export const createProject = async ({ item, visibility = "private" }: CreateProj
         });
 
         if(!response.ok) {
-            console.error('failed to save the project', await response.text());
-            return null;
+            console.error('failed to save the project via worker, falling back to KV', await response.text());
+            return await saveProjectKV(payload);
         }
 
         const data = (await response.json()) as { project?: DesignItem | null }
 
-        return data?.project ?? null;
+        return data?.project ?? payload;
     } catch (e) {
-        console.log('Failed to save project', e)
-        return null;
+        console.log('Failed to save project via worker, falling back to KV', e);
+        return await saveProjectKV(payload);
     }
 }
 
-export const getProjects = async () => {
+export const getProjects = async (): Promise<DesignItem[]> => {
     if(!PUTER_WORKER_URL) {
-        console.warn('Missing VITE_PUTER_WORKER_URL; skip history fetch;');
-        return []
+        console.warn('Missing VITE_PUTER_WORKER_URL; fetching from direct KV;');
+        return await getUserProjectsKV();
     }
 
     try {
         const response = await puter.workers.exec(`${PUTER_WORKER_URL}/api/projects/list`, { method: 'GET' });
 
         if(!response.ok) {
-            console.error('Failed to fetch history', await response.text());
-            return [];
+            console.error('Failed to fetch history from worker, falling back to KV', await response.text());
+            return await getUserProjectsKV();
         }
 
         const data = (await response.json()) as { projects?: DesignItem[] | null };
 
-        return Array.isArray(data?.projects) ? data?.projects : [];
+        return Array.isArray(data?.projects) ? data?.projects : await getUserProjectsKV();
     } catch (e) {
-        console.error('Failed to get projects', e);
-        return [];
+        console.error('Failed to get projects from worker, falling back to KV', e);
+        return await getUserProjectsKV();
     }
 }
 
-export const getProjectById = async ({ id }: { id: string }) => {
+export const getProjectById = async ({ id }: { id: string }): Promise<DesignItem | null> => {
     if (!PUTER_WORKER_URL) {
-        console.warn("Missing VITE_PUTER_WORKER_URL; skipping project fetch.");
-        return null;
+        console.warn("Missing VITE_PUTER_WORKER_URL; fetching project from direct KV.");
+        return await getProjectKV(id);
     }
 
     console.log("Fetching project with ID:", id);
@@ -114,24 +132,89 @@ export const getProjectById = async ({ id }: { id: string }) => {
             { method: "GET" },
         );
 
-        console.log("Fetch project response:", response);
-
         if (!response.ok) {
-            console.error("Failed to fetch project:", await response.text());
-            return null;
+            console.error("Failed to fetch project from worker, falling back to KV:", await response.text());
+            return await getProjectKV(id);
         }
 
         const data = (await response.json()) as {
             project?: DesignItem | null;
         };
 
-        console.log("Fetched project data:", data);
-
-        return data?.project ?? null;
+        return data?.project ?? await getProjectKV(id);
     } catch (error) {
-        console.error("Failed to fetch project:", error);
+        console.error("Failed to fetch project from worker, falling back to KV:", error);
+        return await getProjectKV(id);
+    }
+};
+
+// ─── Update (Khushi Pal - Oct 14) ──────────────────────────────────────────
+
+export const updateProject = async (
+    idOrParams: string | UpdateProjectParams,
+    maybeUpdates?: Partial<Omit<DesignItem, "id">>
+): Promise<DesignItem | null> => {
+    const projectId = typeof idOrParams === "string" ? idOrParams : idOrParams.id;
+    const updates = typeof idOrParams === "string" ? (maybeUpdates || {}) : (idOrParams.updates || {});
+
+    if (!projectId) {
+        console.warn("updateProject: missing projectId");
         return null;
     }
+
+    if (PUTER_WORKER_URL) {
+        try {
+            const response = await puter.workers.exec(
+                `${PUTER_WORKER_URL}/api/projects/update`,
+                {
+                    method: "POST",
+                    body: JSON.stringify({ projectId, updates }),
+                }
+            );
+
+            if (response.ok) {
+                const data = (await response.json()) as { project?: DesignItem | null };
+                if (data?.project) return data.project;
+            } else {
+                console.warn("Worker update failed; falling back to direct KV:", await response.text());
+            }
+        } catch (e) {
+            console.warn("Worker error during update; falling back to direct KV:", e);
+        }
+    }
+
+    return await updateProjectKV(projectId, updates);
+};
+
+// ─── User Projects Query (Khushi Pal - Oct 14) ─────────────────────────────
+
+export const getUserProjects = async (
+    params?: string | GetUserProjectsParams
+): Promise<DesignItem[]> => {
+    const userId = typeof params === "string" ? params : params?.userId;
+
+    if (PUTER_WORKER_URL) {
+        try {
+            const endpoint = userId
+                ? `${PUTER_WORKER_URL}/api/projects/user?userId=${encodeURIComponent(userId)}`
+                : `${PUTER_WORKER_URL}/api/projects/list`;
+
+            const response = await puter.workers.exec(endpoint, { method: "GET" });
+
+            if (response.ok) {
+                const data = (await response.json()) as { projects?: DesignItem[] | null };
+                if (Array.isArray(data?.projects)) {
+                    return data.projects;
+                }
+            } else {
+                console.warn("Worker failed to fetch user projects; falling back to KV:", await response.text());
+            }
+        } catch (e) {
+            console.warn("Worker error fetching user projects; falling back to KV:", e);
+        }
+    }
+
+    return await getUserProjectsKV(userId);
 };
 
 // ─── Visibility ───────────────────────────────────────────────────────────────
@@ -141,8 +224,8 @@ export const updateProjectVisibility = async (
     visibility: ProjectVisibility,
 ): Promise<DesignItem | null> => {
     if (!PUTER_WORKER_URL) {
-        console.warn("Missing VITE_PUTER_WORKER_URL; skipping visibility update.");
-        return null;
+        console.warn("Missing VITE_PUTER_WORKER_URL; updating visibility in KV.");
+        return await updateProjectKV(projectId, { isPublic: visibility === "public" });
     }
 
     try {
@@ -155,45 +238,51 @@ export const updateProjectVisibility = async (
         );
 
         if (!response.ok) {
-            console.error("Failed to update visibility:", await response.text());
-            return null;
+            console.error("Failed to update visibility via worker, falling back to KV:", await response.text());
+            return await updateProjectKV(projectId, { isPublic: visibility === "public" });
         }
 
         const data = (await response.json()) as { project?: DesignItem | null };
-        return data?.project ?? null;
+        return data?.project ?? await updateProjectKV(projectId, { isPublic: visibility === "public" });
     } catch (e) {
-        console.error("Failed to update project visibility:", e);
-        return null;
+        console.error("Failed to update project visibility via worker, falling back to KV:", e);
+        return await updateProjectKV(projectId, { isPublic: visibility === "public" });
     }
 };
 
-// ─── Delete ───────────────────────────────────────────────────────────────────
+// ─── Delete (Khushi Pal - Oct 14) ──────────────────────────────────────────
 
-export const deleteProject = async (projectId: string): Promise<boolean> => {
-    if (!PUTER_WORKER_URL) {
-        console.warn("Missing VITE_PUTER_WORKER_URL; skipping delete.");
-        return false;
-    }
+export const deleteProject = async (
+    projectIdOrParams: string | DeleteProjectParams
+): Promise<boolean> => {
+    const projectId = typeof projectIdOrParams === "string" ? projectIdOrParams : projectIdOrParams.id;
 
-    try {
-        const response = await puter.workers.exec(
-            `${PUTER_WORKER_URL}/api/projects/delete`,
-            {
-                method: "POST",
-                body: JSON.stringify({ projectId }),
-            },
-        );
+    if (!projectId) return false;
 
-        if (!response.ok) {
-            console.error("Failed to delete project:", await response.text());
-            return false;
+    let workerDeleted = false;
+
+    if (PUTER_WORKER_URL) {
+        try {
+            const response = await puter.workers.exec(
+                `${PUTER_WORKER_URL}/api/projects/delete`,
+                {
+                    method: "POST",
+                    body: JSON.stringify({ projectId }),
+                },
+            );
+
+            if (response.ok) {
+                workerDeleted = true;
+            } else {
+                console.warn("Worker delete failed; attempting direct KV delete:", await response.text());
+            }
+        } catch (e) {
+            console.warn("Worker delete error; attempting direct KV delete:", e);
         }
-
-        return true;
-    } catch (e) {
-        console.error("Failed to delete project:", e);
-        return false;
     }
+
+    const kvDeleted = await deleteProjectKV(projectId);
+    return workerDeleted || kvDeleted;
 };
 
 // ─── Community feed ───────────────────────────────────────────────────────────
@@ -222,3 +311,4 @@ export const getCommunityProjects = async (): Promise<DesignItem[]> => {
         return [];
     }
 };
+
