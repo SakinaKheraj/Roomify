@@ -1,62 +1,71 @@
-import puter from "@heyputer/puter.js";
+import { createClient } from '@supabase/supabase-js';
+
+// ── Supabase client (browser-safe anon key) ───────────────────────────────────
+export const supabase = createClient(
+    import.meta.env.VITE_SUPABASE_URL as string,
+    import.meta.env.VITE_SUPABASE_ANON_KEY as string
+);
 
 /**
- * Signs the current user in via Puter's OAuth popup.
- * Returns true on success, false if the user cancels or an error occurs.
+ * Opens the Google OAuth popup / redirect via Supabase Auth.
+ * Returns true on successful initiation (redirect will follow).
  */
 export const signIn = async (): Promise<boolean> => {
-    try {
-        await puter.auth.signIn();
-        return true;
-    } catch (e) {
-        console.warn("Sign-in failed or was cancelled:", e);
+    const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+            redirectTo: `${window.location.origin}/auth/callback`,
+        },
+    });
+    if (error) {
+        console.warn('Sign-in failed:', error.message);
         return false;
     }
+    return true;
 };
 
 /**
- * Signs the current user out of Puter.
- * Returns true on success.
+ * Signs the current user out.
  */
 export const signOut = async (): Promise<boolean> => {
-    try {
-        await puter.auth.signOut();
-        return true;
-    } catch (e) {
-        console.warn("Sign-out failed:", e);
+    const { error } = await supabase.auth.signOut();
+    if (error) {
+        console.warn('Sign-out failed:', error.message);
         return false;
     }
+    return true;
 };
 
 /**
- * Returns the currently authenticated Puter user, or null if not signed in.
+ * Returns the currently authenticated user or null.
  */
-export const getCurrentUser = async (): Promise<{ userId: string; userName: string } | null> => {
-    try {
-        const isSignedIn = await puter.auth.isSignedIn();
-        if (!isSignedIn) return null;
+export const getCurrentUser = async (): Promise<{
+    userId: string;
+    userName: string;
+} | null> => {
+    const {
+        data: { session },
+    } = await supabase.auth.getSession();
 
-        const user = await puter.auth.getUser();
-        if (!user) return null;
+    if (!session?.user) return null;
 
-        const u = user as any;
-        return {
-            userId: u?.uuid ?? u?.username ?? "",
-            userName: u?.username ?? "",
-        };
-    } catch (e) {
-        console.warn("Failed to get current user:", e);
-        return null;
-    }
+    const user = session.user;
+    return {
+        userId: user.id,
+        userName:
+            (user.user_metadata?.['full_name'] as string) ??
+            (user.user_metadata?.['name'] as string) ??
+            user.email ??
+            '',
+    };
 };
 
 /**
- * Checks whether the user is currently authenticated with Puter.
+ * Checks if a valid session exists.
  */
 export const isAuthenticated = async (): Promise<boolean> => {
-    try {
-        return await puter.auth.isSignedIn();
-    } catch {
-        return false;
-    }
+    const {
+        data: { session },
+    } = await supabase.auth.getSession();
+    return !!session;
 };
