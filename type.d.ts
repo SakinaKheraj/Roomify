@@ -12,6 +12,29 @@ interface Material {
     category: "floor" | "wall" | "furniture";
 }
 
+// ── Feature 1 types ──────────────────────────────────────────────────────────
+type RoomStyleId =
+  | "modern-minimalist"
+  | "scandinavian"
+  | "industrial-loft"
+  | "cozy-rustic"
+  | "mediterranean";
+
+interface RoomStyle {
+  id: RoomStyleId;
+  label: string;
+  emoji: string;
+  promptSuffix: string;
+}
+
+// ── Feature 4 types ──────────────────────────────────────────────────────────
+interface ChatMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  timestamp: number;
+}
+
 interface DesignItem {
     id: string;
     name?: string | null;
@@ -25,6 +48,10 @@ interface DesignItem {
     sharedBy?: string | null;
     sharedAt?: string | null;
     isPublic?: boolean;
+    // Feature 1 — persisted style choice
+    style?: RoomStyle | null;
+    // Feature 4 — persisted chat history
+    chatHistory?: ChatMessage[];
 }
 
 interface DesignConfig {
@@ -135,6 +162,10 @@ interface GetUserProjectsParams {
 }
 
 interface Generate3DViewParams {
-    sourceImage: string;
+    sourceImage?: string | null;   // floor plan (omit for text-to-3D)
+    textPrompt?: string | null;    // text-to-3D description
     projectId?: string | null;
+    style?: RoomStyle | null;      // vibe
+    wants?: string[];              // chat refinement: what the user wants
+    avoid?: string[];              // chat refinement: what the user does not want
 }
