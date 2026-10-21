@@ -1,0 +1,21 @@
+name = "roomify-worker"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+compatibility_flags = ["nodejs_compat"]
+
+# ── Cloudflare D1 (SQLite database for project metadata) ─────────────────────
+[[d1_databases]]
+binding = "DB"
+database_name = "roomify-db"
+database_id = "d88c9c5e-d664-4b44-b603-488535278d40"
+
+# ── Cloudflare Workers AI (img2img generation — no external key needed) ────────
+[ai]
+binding = "AI"
+
+# ── Environment variables ─────────────────────────────────────────────────────
+[vars]
+SUPABASE_URL = "https://efxwylcmaraglkqsqamv.supabase.co"
+
+# ── Secrets (set via: wrangler secret put <NAME>) ─────────────────────────────
+# SUPABASE_SERVICE_ROLE_KEY
