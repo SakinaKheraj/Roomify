@@ -19,7 +19,7 @@ type AuthGateProps = {
 const AuthGate = ({
     children,
     title = "Sign in required",
-    description = "You need a free Puter account to use this feature. Sign in to continue.",
+    description = "Sign in with your Google account to use this feature.",
 }: AuthGateProps) => {
     const { isSignedIn, signIn } = useOutletContext<AuthContext>();
 
@@ -43,7 +43,7 @@ const AuthGate = ({
                         className="confirm"
                         onClick={signIn}
                     >
-                        Sign in with Puter
+                        Sign in with Google
                     </Button>
                 </div>
             </div>
