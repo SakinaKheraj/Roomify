@@ -3,15 +3,23 @@ import { useNavigate, useOutletContext } from "react-router";
 import { ArrowRight, Sparkles, Layers, Cpu, ShieldCheck } from "lucide-react";
 import Upload from "../../components/Upload";
 import Button from "../../components/ui/Button";
-import { createProject, getProjects } from "../../lib/puter.action";
+import { createProject, getProjects, persistImage } from "../../lib/api";
+import { Wand2 } from "lucide-react";
 
 const Home = () => {
     const navigate = useNavigate();
     const { isSignedIn, userId, signIn } = useOutletContext<AuthContext>();
     const [recentProjects, setRecentProjects] = useState<DesignItem[]>([]);
     const [isLoadingProjects, setIsLoadingProjects] = useState(true);
+    const [roomText, setRoomText] = useState("");
 
     useEffect(() => {
+        if (!isSignedIn) {
+            setRecentProjects([]);
+            setIsLoadingProjects(false);
+            return;
+        }
+
         const fetchProjects = async () => {
             try {
                 const list = await getProjects();
@@ -26,30 +34,54 @@ const Home = () => {
         fetchProjects();
     }, [isSignedIn]);
 
-    const handleUploadComplete = async (base64Data: string) => {
-        const id = crypto.randomUUID();
-        const newItem: DesignItem = {
-            id,
-            name: `Project ${id.slice(0, 8)}`,
-            sourceImage: base64Data,
-            timestamp: Date.now(),
-            ownerId: userId || null,
-            isPublic: false,
-        };
-
-        // Try to save to cloud (only works if VITE_PUTER_WORKER_URL is set)
-        await createProject({ item: newItem, visibility: "private" });
+    const openProject = async (item: DesignItem) => {
+        // Try to save to cloud (only if signed in)
+        if (isSignedIn) {
+            const saved = await createProject({ item, visibility: "private" });
+            if (saved) item = { ...item, sourceImage: saved.sourceImage || item.sourceImage };
+        }
 
         // Cache in sessionStorage for persistence across page refreshes
         try {
-            sessionStorage.setItem(`roomify_project_${id}`, JSON.stringify(newItem));
+            sessionStorage.setItem(`roomify_project_${item.id}`, JSON.stringify(item));
         } catch {
             // Ignore storage limits
         }
 
-        // Always pass project via navigation state as a fallback
-        // so the visualizer can render without cloud persistence
-        navigate(`/visualizer/${id}`, { state: { project: newItem } });
+        // Pass project via navigation state as a fallback when cloud save is unavailable
+        navigate(`/visualizer/${item.id}`, { state: { project: item } });
+    };
+
+    const handleUploadComplete = async (base64Data: string) => {
+        const id = crypto.randomUUID();
+        // Upload the plan as a file so the database only stores a small URL
+        const sourceImage = isSignedIn ? await persistImage(base64Data, id, "source") : base64Data;
+        await openProject({
+            id,
+            name: `Project ${id.slice(0, 8)}`,
+            sourceImage,
+            timestamp: Date.now(),
+            ownerId: userId || null,
+            isPublic: false,
+        });
+    };
+
+    // Text-to-3D: no floor plan needed. The description is kept in the project name.
+    const handleTextToRoom = async () => {
+        const text = roomText.trim();
+        if (!text || !isSignedIn) return;
+        const id = crypto.randomUUID();
+        const blank =
+            "data:image/svg+xml;utf8," +
+            encodeURIComponent("<svg xmlns='http://www.w3.org/2000/svg' width='64' height='64'><rect width='64' height='64' fill='white'/></svg>");
+        await openProject({
+            id,
+            name: `Text: ${text.slice(0, 200)}`,
+            sourceImage: blank,
+            timestamp: Date.now(),
+            ownerId: userId || null,
+            isPublic: false,
+        });
     };
 
     return (
@@ -67,7 +99,7 @@ const Home = () => {
 
                 <p className="subtitle">
                     Upload your CAD or architectural floor plan and convert it into
-                    realistic 3D perspectives in seconds using Gemini & Puter Cloud.
+                    realistic 3D perspectives in seconds using AI & Cloudflare.
                 </p>
 
                 <div className="actions">
@@ -95,6 +127,20 @@ const Home = () => {
                         </div>
 
                         <Upload onComplete={handleUploadComplete} />
+
+                        <div className="text-room">
+                            <p>No floor plan? Describe a room and we will build it in 3D.</p>
+                            <textarea
+                                className="refine-input"
+                                rows={2}
+                                placeholder="e.g. a 12x14 ft living room with a grey sofa, big window and wooden floor"
+                                value={roomText}
+                                onChange={(e) => setRoomText(e.target.value)}
+                            />
+                            <Button size="sm" onClick={handleTextToRoom} disabled={!isSignedIn || !roomText.trim()}>
+                                <Wand2 className="w-4 h-4 mr-2" /> {isSignedIn ? "Generate from text" : "Sign in to generate"}
+                            </Button>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -168,7 +214,7 @@ const Home = () => {
                         </div>
                         <div className="logo-item">
                             <ShieldCheck className="w-5 h-5 text-green-500 mr-2" />
-                            <span>Puter.js Cloud</span>
+                            <span>Cloudflare</span>
                         </div>
                         <div className="logo-item">
                             <Sparkles className="w-5 h-5 text-purple-500 mr-2" />
