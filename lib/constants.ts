@@ -1,4 +1,4 @@
-export const PUTER_WORKER_URL = import.meta.env.VITE_PUTER_WORKER_URL || "";
+// Worker URL is read in lib/api.ts and lib/ai.action.ts via import.meta.env.VITE_WORKER_URL
 
 // Storage Paths
 export const STORAGE_PATHS = {
@@ -54,3 +54,58 @@ STYLE & LIGHTING:
 - Materials: realistic wood/tile floors, clean walls, subtle shadows.
 - Finish: professional architectural visualization; no text, no watermarks, no logos.
 `.trim();
+
+// ── Feature 1 — Room Style Presets ──────────────────────────────────────────
+export const ROOM_STYLES: RoomStyle[] = [
+  {
+    id: "modern-minimalist",
+    label: "Modern Minimalist",
+    emoji: "🏛️",
+    promptSuffix:
+      "STYLE DIRECTIVE: Apply a modern minimalist aesthetic — clean straight lines, neutral palette of whites, warm greys and light oak wood, uncluttered surfaces with deliberate negative space, recessed lighting, and sleek matte materials throughout.",
+  },
+  {
+    id: "scandinavian",
+    label: "Scandinavian",
+    emoji: "🌿",
+    promptSuffix:
+      "STYLE DIRECTIVE: Apply a Scandinavian hygge aesthetic — light birch and whitewashed wood, crisp white walls, cosy linen and wool textiles, soft diffused natural lighting, and functional minimalist furniture with gentle organic curves.",
+  },
+  {
+    id: "industrial-loft",
+    label: "Industrial Loft",
+    emoji: "🖤",
+    promptSuffix:
+      "STYLE DIRECTIVE: Apply an industrial loft aesthetic — exposed brick walls, polished concrete floors, dark matte iron fixtures and structural beams, Edison-bulb pendant lighting, and raw metal accents contrasted with reclaimed wood surfaces.",
+  },
+  {
+    id: "cozy-rustic",
+    label: "Cozy Rustic",
+    emoji: "🏡",
+    promptSuffix:
+      "STYLE DIRECTIVE: Apply a cosy rustic farmhouse aesthetic — warm chestnut wooden beams and plank floors, rough stone accent walls, earthy terracotta and sage tones, vintage lantern-style fixtures, and plaid and linen textiles.",
+  },
+  {
+    id: "mediterranean",
+    label: "Mediterranean",
+    emoji: "🌊",
+    promptSuffix:
+      "STYLE DIRECTIVE: Apply a Mediterranean coastal aesthetic — hand-painted terracotta and encaustic floor tiles, whitewashed stucco walls, arched doorways and niches, mosaic tile accents, and a warm sunlit palette of cobalt blue, ochre, and terracotta.",
+  },
+];
+
+// ── Short prompts ───────────────────────────────────────────────────────────
+// Stable Diffusion only reads ~77 tokens, so long prompts are ignored/rejected.
+export const RENDER_PROMPT_SHORT =
+  "photorealistic top-down 3D architectural render of this floor plan, furnished rooms, realistic floors and walls, soft daylight, sharp, clean, no text, no labels";
+
+export const TEXT_RENDER_PROMPT_SHORT =
+  "photorealistic top-down isometric 3D render of a furnished room, realistic materials, soft daylight, sharp, clean, no text";
+
+export const VIBE_SHORT_PROMPTS: Record<string, string> = {
+  "modern-minimalist": "modern minimalist style, white and warm grey, light oak, clean lines",
+  scandinavian: "scandinavian style, birch wood, white walls, cosy linen, soft natural light",
+  "industrial-loft": "industrial loft style, exposed brick, concrete floor, dark iron, edison bulbs",
+  "cozy-rustic": "cozy rustic style, wooden beams, plank floors, stone wall, terracotta and sage",
+  mediterranean: "mediterranean style, terracotta tiles, whitewashed walls, arches, cobalt blue accents",
+};
