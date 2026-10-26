@@ -122,7 +122,7 @@ const VisualizerId = () => {
         }
     };
 
-    // ── Conversational render refinement loop: retains room geometry while applying wants/avoid directives
+    // AI chat: remember what the user wants / doesn't want, then re-render
     const handleRefine = async (want: string, avoidText: string) => {
         if (!project) return;
         const nextWants = want ? [...wants, want] : wants;
