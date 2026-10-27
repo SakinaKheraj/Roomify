@@ -7,7 +7,12 @@ import {
 } from "react-router";
 import { useEffect, useState, useCallback, type ReactNode } from "react";
 import "./app.css";
-import { getCurrentUser, signIn as puterSignIn, signOut as puterSignOut } from "../lib/auth";
+import {
+  getCurrentUser,
+  signIn as supabaseSignIn,
+  signOut as supabaseSignOut,
+  supabase,
+} from "../lib/auth";
 import Navbar from "../components/Navbar";
 
 export const links = () => [
@@ -79,19 +84,30 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    // Check session on mount
     refreshAuth();
+
+    // Listen for Supabase auth events (sign-in redirect, token refresh, etc.)
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(async (event) => {
+      if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+        await refreshAuth();
+      }
+    });
+
+    return () => subscription.unsubscribe();
   }, [refreshAuth]);
 
   const handleSignIn = async (): Promise<boolean> => {
-    const success = await puterSignIn();
-    if (success) {
-      await refreshAuth();
-    }
+    const success = await supabaseSignIn();
+    // Note: Google OAuth redirects — refreshAuth will be called by
+    // the onAuthStateChange listener when the user returns
     return success;
   };
 
   const handleSignOut = async (): Promise<boolean> => {
-    const success = await puterSignOut();
+    const success = await supabaseSignOut();
     setAuthState({
       isSignedIn: false,
       userName: null,
