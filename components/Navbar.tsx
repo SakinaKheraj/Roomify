@@ -1,4 +1,5 @@
 import {Box} from "lucide-react";
+import {Link} from "react-router";
 import Button from "./ui/Button";
 
 interface NavbarProps {
@@ -14,7 +15,7 @@ const Navbar = ({ isSignedIn, userName, onSignIn, onSignOut }: NavbarProps) => {
             try {
                 await onSignOut();
             } catch (e) {
-                console.error(`Puter sign out failed: ${e}`);
+                console.error(`Sign out failed: ${e}`);
             }
 
             return;
@@ -23,7 +24,7 @@ const Navbar = ({ isSignedIn, userName, onSignIn, onSignOut }: NavbarProps) => {
         try {
             await onSignIn();
         } catch (e) {
-            console.error(`Puter sign in failed: ${e}`);
+            console.error(`Sign in failed: ${e}`);
         }
     };
 
@@ -40,10 +41,8 @@ const Navbar = ({ isSignedIn, userName, onSignIn, onSignOut }: NavbarProps) => {
                     </div>
 
                     <ul className="links">
-                        <a href="#">Product</a>
-                        <a href="#">Pricing</a>
-                        <a href="#">Community</a>
-                        <a href="#">Enterprise</a>
+                        <Link to="/">Home</Link>
+                        <Link to="/community">Community</Link>
                     </ul>
                 </div>
 
@@ -64,7 +63,9 @@ const Navbar = ({ isSignedIn, userName, onSignIn, onSignOut }: NavbarProps) => {
                                 Log In
                             </Button>
 
-                            <a href="#upload" className="cta">Get Started</a>
+                            <Button onClick={handleAuthClick} size="sm" variant="primary" className="cta">
+                                Get Started
+                            </Button>
                         </>
                     )}
                 </div>
