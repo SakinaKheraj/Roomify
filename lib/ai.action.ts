@@ -1,6 +1,6 @@
 /**
  * lib/ai.action.ts
- * Talks to the Cloudflare Worker: render generation.
+ * Talks to the Cloudflare Worker: render generation, Shop the Room.
  */
 import {
     RENDER_PROMPT_SHORT,
@@ -11,7 +11,7 @@ import { getAccessToken } from './auth';
 
 const WORKER_URL = (import.meta.env.VITE_WORKER_URL as string | undefined) ?? '';
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 export const fetchAsDataUrl = async (url: string): Promise<string> => {
     const response = await fetch(url);
@@ -72,20 +72,23 @@ const postToWorker = async <T>(path: string, body: unknown): Promise<T> => {
     return data as T;
 };
 
-// ── Prompt builder (kept short on purpose) ───────────────────────────────────
+// ── Prompt builder (kept short on purpose) ────────────────────────────────────
 
-const buildPrompt = ({ style, textPrompt }: Generate3DViewParams) => {
+const buildPrompt = ({ style, wants = [], avoid = [], textPrompt }: Generate3DViewParams) => {
     const parts: string[] = [];
     if (textPrompt) parts.push(textPrompt);
+    // Latest 3 refinements first so they carry the most weight
+    if (wants.length) parts.push(wants.slice(-3).join(', '));
     parts.push(textPrompt ? TEXT_RENDER_PROMPT_SHORT : RENDER_PROMPT_SHORT);
     if (style) parts.push(VIBE_SHORT_PROMPTS[style.id] ?? style.label);
+    if (avoid.length) parts.push(`without ${avoid.slice(-3).join(', ')}`);
     return parts.join('. ');
 };
 
-// ── Render generation ────────────────────────────────────────────────────────
+// ── Render generation ─────────────────────────────────────────────────────────
 
 export const generate3DView = async (params: Generate3DViewParams) => {
-    const { sourceImage, textPrompt } = params;
+    const { sourceImage, textPrompt, avoid = [] } = params;
 
     let sourceImageBase64: string | undefined;
     if (!textPrompt && sourceImage) {
@@ -100,6 +103,7 @@ export const generate3DView = async (params: Generate3DViewParams) => {
     const data = await postToWorker<{ renderedImage?: string; note?: string }>('/api/ai/generate', {
         sourceImageBase64,
         prompt: buildPrompt(params),
+        negativePrompt: avoid.slice(-3).join(', '),
     });
 
     if (data.note) console.warn('[Roomify]', data.note);
