@@ -93,6 +93,8 @@ export default function App() {
     } = supabase.auth.onAuthStateChange(async (event) => {
       if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
         await refreshAuth();
+      } else if (event === 'SIGNED_OUT') {
+        setAuthState({ isSignedIn: false, userName: null, userId: null });
       }
     });
 

@@ -61,6 +61,17 @@ export const getCurrentUser = async (): Promise<{
 };
 
 /**
+ * Returns the current Supabase JWT access token (used to authenticate
+ * requests to the Cloudflare Worker).
+ */
+export const getAccessToken = async (): Promise<string | null> => {
+    const {
+        data: { session },
+    } = await supabase.auth.getSession();
+    return session?.access_token ?? null;
+};
+
+/**
  * Checks if a valid session exists.
  */
 export const isAuthenticated = async (): Promise<boolean> => {
