@@ -172,5 +172,22 @@ export const uploadImage = async (
     }
 };
 
+/**
+ * Uploads a data-URL image to storage and returns its public URL.
+ * Big base64 strings do not fit in the database, so we store URLs instead.
+ * If the upload fails we return the original data URL so the app keeps working.
+ */
+export const persistImage = async (
+    dataUrl: string,
+    projectId: string,
+    label: 'source' | 'rendered'
+): Promise<string> => {
+    if (!dataUrl.startsWith('data:')) return dataUrl;
+    const parsed = dataUrlToBlob(dataUrl);
+    if (!parsed) return dataUrl;
+    const url = await uploadImage(parsed.blob, projectId, label);
+    return url ?? dataUrl;
+};
+
 // ── Re-exports kept for backwards-compat with any code that imports from puter.action ──
 export { signIn, signOut, getCurrentUser } from './auth';
