@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { createClient } from '@supabase/supabase-js';
+import { DEFAULT_KEYS, buildShoppingList, matchCategories } from './catalog';
 
 // ── Env bindings (declared in wrangler.toml) ──────────────────────────────────
 type Env = {
@@ -383,7 +384,40 @@ app.post('/api/ai/generate', auth, async (c) => {
     }
 });
 
-// ── Shop the Room: detect main items in a render ───────────────────────────// ── User projects (by userId) ─────────────────────────────────────────────────
+// ── Shop the Room: detect main items in a render ──────────────────────────────
+app.post('/api/shop/detect', auth, async (c) => {
+    let found: string[] = [];
+    try {
+        const { imageBase64 } = await c.req.json<{ imageBase64?: string }>();
+        if (imageBase64) {
+            const bytes = Uint8Array.from(atob(imageBase64), (ch) => ch.charCodeAt(0));
+            const out = await (c.env.AI as any).run('@cf/llava-hf/llava-1.5-7b-hf', {
+                image: Array.from(bytes),
+                prompt: 'List the main furniture and decor items visible in this room, comma separated.',
+                max_tokens: 100,
+            });
+            found = matchCategories(String(out?.description ?? out?.response ?? ''));
+        }
+    } catch (e) {
+        // Vision model is optional — we fall back to the default item list.
+        console.error('Item detection failed:', errMsg(e));
+    }
+    const keys = Array.from(new Set([...DEFAULT_KEYS, ...found]));
+    return c.json({ items: keys, detected: found.length > 0 });
+});
+
+// ── Shop the Room: catalog match, total cost, budget-based cheaper options ────
+app.post('/api/shop/suggest', auth, async (c) => {
+    const { items, styleId, budget } = await c.req.json<{
+        items?: string[];
+        styleId?: string | null;
+        budget?: number | null;
+    }>();
+    const keys = items && items.length ? items : DEFAULT_KEYS;
+    return c.json(buildShoppingList(keys, styleId ?? null, budget ?? null));
+});
+
+// ── User projects (by userId) ─────────────────────────────────────────────────
 app.get('/api/projects/user', auth, async (c) => {
     const authUserId = c.get('userId');
     const targetUserId = c.req.query('userId') ?? authUserId;

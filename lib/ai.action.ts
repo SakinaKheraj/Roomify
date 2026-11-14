@@ -109,3 +109,37 @@ export const generate3DView = async (params: Generate3DViewParams) => {
     if (data.note) console.warn('[Roomify]', data.note);
     return { renderedImage: data.renderedImage ?? null, renderedPath: undefined, note: data.note };
 };
+
+// ── Shop the Room ─────────────────────────────────────────────────────────────
+
+export type ShopItem = {
+    category: string;
+    label: string;
+    emoji: string;
+    name: string;
+    price: number;
+    tier: 'budget' | 'standard' | 'premium';
+};
+
+export type ShopResult = {
+    items: ShopItem[];
+    total: number;
+    budget: number | null;
+    withinBudget: boolean;
+    swaps: { category: string; from: string; to: string; saved: number }[];
+};
+
+export const detectRoomItems = async (renderedImage: string): Promise<string[]> => {
+    let imageBase64: string | undefined;
+    try {
+        const dataUrl = renderedImage.startsWith('data:') ? renderedImage : await fetchAsDataUrl(renderedImage);
+        imageBase64 = (await shrinkImage(dataUrl, 384)).split(',')[1];
+    } catch {
+        // No image → worker falls back to the default item list
+    }
+    const data = await postToWorker<{ items: string[] }>('/api/shop/detect', { imageBase64 });
+    return data.items;
+};
+
+export const suggestShopping = (items: string[], styleId: string | null, budget: number | null) =>
+    postToWorker<ShopResult>('/api/shop/suggest', { items, styleId, budget });
